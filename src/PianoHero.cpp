@@ -14,13 +14,21 @@
 #  include <GL/glut.h>
 #endif
 
-extern "C" {
-	#include <AR/config.h>
-	#include <AR/video.h>
-	#include <AR/param.h>			// arParamDisp()
-	#include <AR/ar.h>
-	#include <AR/gsub_lite.h>
-}
+
+#include <AR/config.h>
+#include <AR/video.h>
+#include <AR/param.h>			// arParamDisp()
+#include <AR/ar.h>
+#include <AR/gsub_lite.h>
+
+#include "Song.h"
+#include "Note.h"
+#include <vector>
+#include <iostream>
+#include <map>
+#include "utils.h"
+
+using namespace std;
 
 
 // ============================================================================
@@ -66,8 +74,13 @@ static int gShowMode = 1;
 static int gDrawRotate = FALSE;
 static float gDrawRotateAngle = 0;			// For use in drawing.
 
+static int playSong = FALSE;
+static double transDelta = 0;
+
 static int gDrawTranslate = FALSE;
 static float gDrawTranslateDelta = 0;
+
+Song* song;
 
 
 // ============================================================================
@@ -100,6 +113,9 @@ static void DrawCube(void)
         /* -x */ {3, 0, 4, 7}, /* +x */ {1, 2, 6, 5}, /* -z */ {4, 5, 6, 7} };
 
     glPushMatrix(); // Save world coordinate system.
+
+
+
     glRotatef(gDrawRotateAngle, 0.0f, 0.0f, 1.0f); // Rotate about z axis.
     glScalef(fSize, fSize, fSize);
     glTranslatef(0.0f, 0.0f, 0.5f); // Place base of cube on marker surface.
@@ -121,11 +137,129 @@ static void DrawCube(void)
     glPopMatrix();    // Restore world coordinate system.
 }
 
+static GLdouble* planeEquation(float x1, float y1, float z1, float x2, float y2, float z2, float x3, float y3, float z3) {
+	GLdouble* eq = new GLdouble[4];
+	eq[0] = (y1*(z2 - z3)) + (y2*(z3 - z1)) + (y3*(z1 - z2));
+	eq[1] = (z1*(x2 - x3)) + (z2*(x3 - x1)) + (z3*(x1 - x2));
+	eq[2] = (x1*(y2 - y3)) + (x2*(y3 - y1)) + (x3*(y1 - y2));
+	eq[3] = -((x1*((y2*z3) - (y3*z2))) + (x2*((y3*z1) - (y1*z3))) + (x3*((y1*z2) - (y2*z1))));
+	return eq;
+}
+
+// A single cuboid is transalted and scaled and redrawn to create the keys.
+static void DrawSong(void) {
+	float fSize = 50.0f;
+	int red = 82;
+	int green = 212;
+	int blue = 255;
+
+	int alt_red = 20;
+	int alt_green = 100;
+	int alt_blue = 255;
+
+	float hdepth = 0.5f;
+	float hwidth = 0.1f;
+	float height = 0.1f;
+	float width_scale = 1.0f;
+
+	GLfloat vertices [8][3] = {
+				/* +y */ {-hwidth, height, hdepth}, {hwidth, height, hdepth}, {-hwidth, height, -hdepth}, {hwidth, height, -hdepth},
+				/* -0 */ {-hwidth, 0.0f, hdepth}, {hwidth, 0.0f, hdepth}, {-hwidth, 0.0f, -hdepth}, {hwidth, 0.0f, -hdepth}};
+
+	GLubyte vertex_colours [8][4] = {
+			{red, green, blue, 100}, {red, green, blue, 100}, {red, green, blue, 100}, {red, green, blue, 100},
+			{red, green, blue, 100}, {red, green, blue, 100}, {red, green, blue, 100}, {red, green, blue, 100} };
+	GLubyte faces [6][4] = { /* ccw-winding */
+			/* +z */ {4, 5, 1, 0}, /* -y */ {6, 7, 3, 2}, /* +y */ {0, 1 ,3 ,2},
+			/* -x */ {4 ,5 ,7, 6}, /* +x */ {6, 4, 0 ,2}, /* -z */ {5, 7, 3 ,1} };
+
+	vector<Note> notes = song->get_notes();
+
+	map<int, float> white_offset;
+	map<int, float> black_offset;
+
+	utils::mapWhiteOffset(white_offset);
+	utils::mapBlackOffset(black_offset);
+
+
+	for(int idx = 0; idx < notes.size(); idx++) {
+		float start = notes[idx].get_start();
+		int key_number = notes[idx].get_key_number();
+		float duration = notes[idx].get_duration();
+		float offset_x = 0.0f;
+		float offset_y = 0.0f;
+
+		if(notes[idx].is_black()) {
+			width_scale = 0.5f;
+			offset_y = 0.1;
+			offset_x = black_offset[key_number] * 0.2f;
+			for(int j =0; j < sizeof(vertex_colours)/sizeof(vertex_colours[0]); j++) {
+				vertex_colours[j][0] = alt_red;
+				vertex_colours[j][1] = alt_green;
+				vertex_colours[j][2] = alt_blue;
+			}
+		}
+		else {
+			width_scale = 1.0f;
+			offset_x = white_offset[key_number] * 0.2f;
+			for(int j =0; j < sizeof(vertex_colours)/sizeof(vertex_colours[0]); j++) {
+				vertex_colours[j][0] = red;
+				vertex_colours[j][1] = green;
+				vertex_colours[j][2] = blue;
+			}
+		}
+
+		int i;
+
+		glPushMatrix(); // Save world coordinate system.
+
+		// Trying to clip plane but not working? come back to
+		//GLdouble* plane_eq = planeEquation(0, 0, 0, 1, 0, 0, 0, 1, 0);
+		//glClipPlane(GL_CLIP_PLANE0, plane_eq);
+		//glEnable(GL_CLIP_PLANE0);
+
+		glRotatef(90, 1.0f, 0.0f, 0.0f); // Rotate about x axis
+		glScalef(fSize*width_scale, fSize, fSize*duration);
+		glTranslatef((offset_x-5)/width_scale, 0.0f + offset_y, (-start+transDelta)/duration - hdepth);
+
+		glDisable(GL_LIGHTING);
+		glDisable(GL_TEXTURE_2D);
+		glDisable(GL_BLEND);
+
+		glColorPointer(4, GL_UNSIGNED_BYTE, 0, vertex_colours);
+		glVertexPointer(3, GL_FLOAT, 0, vertices);
+		glEnableClientState(GL_VERTEX_ARRAY);
+		glEnableClientState(GL_COLOR_ARRAY);
+
+
+		for (i = 0; i < 6; i++) {
+			glDrawElements(GL_TRIANGLE_FAN, 4, GL_UNSIGNED_BYTE, &(faces[i][0]));
+		}
+		glDisableClientState(GL_COLOR_ARRAY);
+		glColor4ub(0, 0, 0, 255);
+		for (i = 0; i < 6; i++) {
+			glDrawElements(GL_LINE_LOOP, 4, GL_UNSIGNED_BYTE, &(faces[i][0]));
+		}
+
+		glPopMatrix();    // Restore world coordinate system.
+	}
+
+
+}
+
 static void DrawCubeUpdate(float timeDelta)
 {
 	if (gDrawRotate) {
 		gDrawRotateAngle += timeDelta * 100.0f; // Rotate cube at 45 degrees per second.
 		if (gDrawRotateAngle > 360.0f) gDrawRotateAngle -= 360.0f;
+	}
+}
+
+static void DrawSongUpdate() {
+	if(playSong){
+		double framerate = (double)gCallCountMarkerDetect/arUtilTimer();
+		double qps = song->get_QPS();
+		transDelta += qps/framerate;
 	}
 }
 
@@ -246,7 +380,7 @@ static void Keyboard(unsigned char key, int x, int y)
 			exit(0);
 			break;
 		case ' ':
-			gDrawRotate = !gDrawRotate;
+			playSong = !playSong;
 			break;
 		case 'X':
 		case 'x':
@@ -334,7 +468,8 @@ static void mainLoop(void)
 	ms_prev = ms;
 
 	// Update drawing.
-	DrawCubeUpdate(s_elapsed);
+	//DrawCubeUpdate(s_elapsed);
+	DrawSongUpdate();
 
 	// Grab a video frame.
 	if ((image = arVideoGetImage()) != NULL) {
@@ -453,7 +588,8 @@ static void Display(void)
 #endif
 
 		// All lighting and geometry to be drawn relative to the marker goes here.
-		DrawCube();
+		//DrawCube();
+        DrawSong();
 
 	} // gPatt_found
 
@@ -483,6 +619,7 @@ static void Display(void)
 
 int main(int argc, char** argv)
 {
+
 	char glutGamemode[32];
 	char cparam_name[] = "Data/camera_para.dat";
 	char vconf[] = "";
@@ -542,7 +679,14 @@ int main(int argc, char** argv)
 	glutVisibilityFunc(Visibility);
 	glutKeyboardFunc(Keyboard);
 
+
+
+	song = new Song("MIDI/where-is-my-mind.mid");
+
 	glutMainLoop();
+
+
+
 
 	return (0);
 }
