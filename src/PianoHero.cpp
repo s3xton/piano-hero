@@ -80,7 +80,29 @@ static double transDelta = 0;
 static int gDrawTranslate = FALSE;
 static float gDrawTranslateDelta = 0;
 
+
+// Piano model settings.
 Song* song;
+map<int, float> white_offset;
+map<int, float> black_offset;
+
+float total_scale = 50.0f;
+float total_offset = -5.0f;
+
+int red = 82; // Colours of the white keys
+int green = 212;
+int blue = 255;
+
+int alt_red = 20; // Colour of the black keys
+int alt_green = 100;
+int alt_blue = 255;
+
+float hdepth = 0.5f; // half depth of the the keys (z)
+float hwidth = 0.1f; // half width of the keys (x)
+float height = 0.1f; // height of the keys (y)
+float width_scale = 1.0f;
+
+
 
 
 // ============================================================================
@@ -114,8 +136,6 @@ static void DrawCube(void)
 
     glPushMatrix(); // Save world coordinate system.
 
-
-
     glRotatef(gDrawRotateAngle, 0.0f, 0.0f, 1.0f); // Rotate about z axis.
     glScalef(fSize, fSize, fSize);
     glTranslatef(0.0f, 0.0f, 0.5f); // Place base of cube on marker surface.
@@ -146,53 +166,36 @@ static GLdouble* planeEquation(float x1, float y1, float z1, float x2, float y2,
 	return eq;
 }
 
-// A single cuboid is transalted and scaled and redrawn to create the keys.
+// A single cuboid is translated, scaled and redrawn to create the keys of the piano.
 static void DrawSong(void) {
-	float fSize = 50.0f;
-	int red = 82;
-	int green = 212;
-	int blue = 255;
-
-	int alt_red = 20;
-	int alt_green = 100;
-	int alt_blue = 255;
-
-	float hdepth = 0.5f;
-	float hwidth = 0.1f;
-	float height = 0.1f;
-	float width_scale = 1.0f;
+	vector<Note> notes = song->get_notes();
 
 	GLfloat vertices [8][3] = {
-				/* +y */ {-hwidth, height, hdepth}, {hwidth, height, hdepth}, {-hwidth, height, -hdepth}, {hwidth, height, -hdepth},
-				/* -0 */ {-hwidth, 0.0f, hdepth}, {hwidth, 0.0f, hdepth}, {-hwidth, 0.0f, -hdepth}, {hwidth, 0.0f, -hdepth}};
+					/* +y */ {-hwidth, height, hdepth}, {hwidth, height, hdepth}, {-hwidth, height, -hdepth}, {hwidth, height, -hdepth},
+					/* -0 */ {-hwidth, 0.0f, hdepth}, {hwidth, 0.0f, hdepth}, {-hwidth, 0.0f, -hdepth}, {hwidth, 0.0f, -hdepth}};
 
 	GLubyte vertex_colours [8][4] = {
 			{red, green, blue, 100}, {red, green, blue, 100}, {red, green, blue, 100}, {red, green, blue, 100},
 			{red, green, blue, 100}, {red, green, blue, 100}, {red, green, blue, 100}, {red, green, blue, 100} };
+
 	GLubyte faces [6][4] = { /* ccw-winding */
 			/* +z */ {4, 5, 1, 0}, /* -y */ {6, 7, 3, 2}, /* +y */ {0, 1 ,3 ,2},
 			/* -x */ {4 ,5 ,7, 6}, /* +x */ {6, 4, 0 ,2}, /* -z */ {5, 7, 3 ,1} };
 
-	vector<Note> notes = song->get_notes();
 
-	map<int, float> white_offset;
-	map<int, float> black_offset;
-
-	utils::mapWhiteOffset(white_offset);
-	utils::mapBlackOffset(black_offset);
-
-
+	float start, duration, offset_x, offset_y;
+	int key_number;
 	for(int idx = 0; idx < notes.size(); idx++) {
-		float start = notes[idx].get_start();
-		int key_number = notes[idx].get_key_number();
-		float duration = notes[idx].get_duration();
-		float offset_x = 0.0f;
-		float offset_y = 0.0f;
+		start = notes[idx].get_start();
+		key_number = notes[idx].get_key_number();
+		duration = notes[idx].get_duration();
+		offset_x = 0.0f;
+		offset_y = 0.0f;
 
 		if(notes[idx].is_black()) {
 			width_scale = 0.5f;
 			offset_y = 0.1;
-			offset_x = black_offset[key_number] * 0.2f;
+			offset_x = black_offset[key_number] * (2 * hwidth); // Offset scaled to the width of a white key
 			for(int j =0; j < sizeof(vertex_colours)/sizeof(vertex_colours[0]); j++) {
 				vertex_colours[j][0] = alt_red;
 				vertex_colours[j][1] = alt_green;
@@ -201,7 +204,8 @@ static void DrawSong(void) {
 		}
 		else {
 			width_scale = 1.0f;
-			offset_x = white_offset[key_number] * 0.2f;
+			offset_x = white_offset[key_number] * (2 * hwidth);  // Offset scaled to the width of a white key
+			offset_y = 0.0f;
 			for(int j =0; j < sizeof(vertex_colours)/sizeof(vertex_colours[0]); j++) {
 				vertex_colours[j][0] = red;
 				vertex_colours[j][1] = green;
@@ -218,9 +222,11 @@ static void DrawSong(void) {
 		//glClipPlane(GL_CLIP_PLANE0, plane_eq);
 		//glEnable(GL_CLIP_PLANE0);
 
-		glRotatef(90, 1.0f, 0.0f, 0.0f); // Rotate about x axis
-		glScalef(fSize*width_scale, fSize, fSize*duration);
-		glTranslatef((offset_x-5)/width_scale, 0.0f + offset_y, (-start+transDelta)/duration - hdepth);
+		glRotatef(90, 1.0f, 0.0f, 0.0f); // Rotate about x axis becuase it was the wrong way for some reason?
+		glScalef(total_scale*width_scale, total_scale, total_scale*duration);
+		glTranslatef((offset_x + total_offset) / width_scale,		// X
+					 offset_y,										// Y
+					 (-start + transDelta) / duration - hdepth);	// Z
 
 		glDisable(GL_LIGHTING);
 		glDisable(GL_TEXTURE_2D);
@@ -243,8 +249,6 @@ static void DrawSong(void) {
 
 		glPopMatrix();    // Restore world coordinate system.
 	}
-
-
 }
 
 static void DrawCubeUpdate(float timeDelta)
@@ -617,6 +621,15 @@ static void Display(void)
 	glutSwapBuffers();
 }
 
+void initSongModel() {
+	utils::mapWhiteOffset(white_offset);
+	utils::mapBlackOffset(black_offset);
+
+	song = new Song("MIDI/where-is-my-mind.mid");
+
+
+}
+
 int main(int argc, char** argv)
 {
 
@@ -680,8 +693,7 @@ int main(int argc, char** argv)
 	glutKeyboardFunc(Keyboard);
 
 
-
-	song = new Song("MIDI/where-is-my-mind.mid");
+	initSongModel();
 
 	glutMainLoop();
 
